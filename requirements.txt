@@ -1,0 +1,5 @@
+aiogram
+redis
+environs
+aiosqlite
+APScheduler

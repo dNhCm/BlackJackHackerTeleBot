@@ -1,0 +1,183 @@
+import asyncio
+from sqlite3 import Row
+from typing import Optional
+
+import aiosqlite as asql
+from aiosqlite import Connection
+
+from misc.logger import logger
+
+
+class BlackJackDatabase:
+    _db: Connection = None
+    name = "./tgbot/models/blackjack.db"
+
+    @classmethod
+    async def get_conn(cls) -> Optional[Connection]:
+        if not cls._db:
+            cls._db = await asql.connect(cls.name)
+            if cls._db:
+                logger.info("BlackJackDatabase was connected successfully!")
+            else:
+                logger.warning("!!! BlackJackDatabase WAS NOT CONNECTED !!!")
+        return cls._db
+
+    @classmethod
+    async def init_user_tables_table(cls):
+        conn = await cls.get_conn()
+        c = await conn.cursor()
+
+        await c.execute("""CREATE TABLE IF NOT EXISTS usersTables (
+                user_id          INTEGER,
+                players_count    INTEGER
+            )""")
+
+        await conn.commit()
+
+    @classmethod
+    async def init_tables_players_cards_table(cls):
+        conn = await cls.get_conn()
+        c = await conn.cursor()
+
+        await c.execute("""CREATE TABLE IF NOT EXISTS tablesPlayersCards (
+            user_id         INTEGER,
+            player_index    INTEGER,
+            cards           CHARACTER(20)
+        )""")
+
+        await conn.commit()
+
+    @classmethod
+    async def insert_user_table(cls, user_id: int) -> bool:
+        conn = await cls.get_conn()
+        c = await conn.cursor()
+        await c.execute(f"""SELECT user_id FROM usersTables
+        WHERE user_id = {user_id}""")
+        results: Row = await c.fetchall()
+        if results:
+            return False
+
+        await c.execute(f"""INSERT INTO usersTables (user_id, players_count)
+        VALUES ({user_id}, 0)""")
+
+        await conn.commit()
+        return True
+
+    @classmethod
+    async def update_user_table(cls, user_id: int, players_count: int) -> bool:
+        conn = await cls.get_conn()
+        c = await conn.cursor()
+
+        await c.execute(f"""UPDATE usersTables
+            SET players_count = {players_count}
+            WHERE user_id = {user_id}
+        """)
+
+        await conn.commit()
+        return True
+
+    @classmethod
+    async def insert_players(cls, user_id: int) -> bool:
+        conn = await cls.get_conn()
+        c = await conn.cursor()
+
+        await c.execute(f"""SELECT player_count FROM userTables
+        WHERE user_id = {user_id}""")
+
+        results = await c.fetchone()
+        if not results:
+            return False
+        else:
+            players_count = int(results[0])
+
+        for i in range(players_count):
+            await c.execute(f"""INSERT INTO tablesPlayersCards (user_id, player_index, cards)
+            VALUES ({user_id}, {i}, '')""")
+
+        await conn.commit()
+        return True
+
+    @classmethod
+    async def update_card_value(cls, user_id: int, player_index: int, card_value: str) -> bool:
+        conn = await cls.get_conn()
+        c = await conn.cursor()
+
+        await c.execute(f"""SELECT (player_index, cards) FROM tablesPlayersCards
+        WHERE id = {user_id}""")
+
+        records: Row = await c.fetchall()
+        if len(records) == 0:
+            return False
+
+        for record in records:
+            if int(record[0]) == player_index:
+                cards = str(record[1]) + f"{card_value} "
+
+                await c.execute(f"""UPDATE tablesPlayersCards
+                    SET cards = {cards}
+                    WHERE user_id = {user_id}
+                """)
+
+                await conn.commit()
+                return True
+        else:
+            return False
+
+    @classmethod
+    async def delete_user_table(cls, user_id: int) -> bool:
+        conn = await cls.get_conn()
+        c = await conn.cursor()
+
+        await c.execute(f"""DELETE FROM tablesPlayersCards WHERE user_id={user_id}""")
+
+        await conn.commit()
+        return True
+
+    @classmethod
+    async def new_user_table(cls, user_id: int, players_count: int) -> bool:
+        isOK_list = []
+        isOK_list += await asyncio.gather(
+            cls.delete_user_table(user_id),
+            cls.update_user_table(user_id, players_count)
+        )
+        isOK_list.append(await cls.insert_players(user_id))
+
+        for isOK in isOK_list:
+            if not isOK:
+                return False
+        else:
+            return True
+
+    @classmethod
+    async def get_table_players_info(cls, user_id: int) -> Optional[dict[int | list[dict[str]]]]:
+        conn = await cls.get_conn()
+        c = await conn.cursor()
+
+        await c.execute(f"""SELECT players_count FROM usersTables
+        WHERE user_id = {user_id}""")
+
+        result = await c.fetchone()
+        if not result:
+            return None
+        else:
+            players_count = result[0]
+
+        await c.execute(f"""SELECT (player_index, cards) FROM tablesPlayersCards
+        WHERE user_id = {user_id}
+        ORDER BY player_index ASC;""")
+
+        results: Row = await c.fetchall()
+
+        return {
+            "user_id": user_id,
+            "players_count": players_count,
+            "players": [
+                {"cards": result[1]}
+                for result in results
+            ]
+        }
+
+
+async def main():
+    await BlackJackDatabase.init_user_tables_table()
+    await BlackJackDatabase.init_tables_players_cards_table()
